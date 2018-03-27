@@ -10,6 +10,7 @@ NODE_MAJOR_VERSION >= 7 &&
   require('../packages/apollo-server-adonis/dist/adonisApollo.test');
 require('../packages/apollo-server-express/dist/expressApollo.test');
 require('../packages/apollo-server-express/dist/connectApollo.test');
+require('../packages/apollo-server-feathers/dist/feathersApollo.test');
 (NODE_MAJOR_VERSION >= 9 ||
   (NODE_MAJOR_VERSION >= 8 && NODE_MAJOR_REVISION >= 9)) &&
   require('../packages/apollo-server-hapi/dist/hapiApollo.test'); // Hapi 17 is 8.9+
