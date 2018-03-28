@@ -1,7 +1,15 @@
-import * as express from 'express';
 import feathers from '@feathersjs/feathers';
-import expressify from '@feathersjs/express';
-import { graphqlExpress, graphiqlExpress } from './feathersApollo';
+import {
+  default as express,
+  json,
+  rest,
+  errorHandler,
+} from '@feathersjs/express';
+import {
+  graphqlFeathers,
+  feathersGraphQLFormatter,
+  graphiqlFeathers,
+} from './feathersApollo';
 import testSuite, {
   schema as Schema,
   CreateAppOptions,
@@ -11,29 +19,41 @@ import { GraphQLOptions } from 'apollo-server-core';
 import 'mocha';
 
 function createApp(options: CreateAppOptions = {}) {
-  const app = expressify(feathers());
+  const app = express(feathers());
 
   options.graphqlOptions = options.graphqlOptions || { schema: Schema };
+
   if (!options.excludeParser) {
-    app.use('/graphql', express.json());
+    app.use(json());
   }
+
+  app.configure(rest());
+
   if (options.graphiqlOptions) {
-    app.use('/graphiql', graphiqlExpress(options.graphiqlOptions));
+    app.use('/graphiql', graphiqlFeathers(options.graphiqlOptions));
   }
-  app.use('/graphql', require('connect-query')());
-  app.use('/graphql', graphqlExpress(options.graphqlOptions));
+
+  app.use(
+    '/graphql',
+    graphqlFeathers(options.graphqlOptions),
+    feathersGraphQLFormatter,
+  );
+
+  app.use(errorHandler());
+  app.setup();
+
   return app;
 }
 
 describe('feathersApollo', () => {
   it('throws error if called without schema', function() {
-    expect(() => graphqlExpress(undefined as GraphQLOptions)).to.throw(
+    expect(() => graphqlFeathers(undefined as GraphQLOptions)).to.throw(
       'Apollo Server requires options.',
     );
   });
 
   it('throws an error if called with more than one argument', function() {
-    expect(() => (<any>graphqlExpress)({}, 'x')).to.throw(
+    expect(() => (<any>graphqlFeathers)({}, 'x')).to.throw(
       'Apollo Server expects exactly one argument, got 2',
     );
   });

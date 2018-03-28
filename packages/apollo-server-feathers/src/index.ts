@@ -3,9 +3,7 @@ export { GraphQLOptions } from 'apollo-server-core';
 
 // Express Middleware
 export {
-  ExpressGraphQLOptionsFunction,
-  ExpressHandler,
-  ExpressGraphiQLOptionsFunction,
-  graphqlExpress,
-  graphiqlExpress,
+  FeathersGraphiQLOptionsFunction,
+  graphqlFeathers,
+  graphiqlFeathers,
 } from './feathersApollo';

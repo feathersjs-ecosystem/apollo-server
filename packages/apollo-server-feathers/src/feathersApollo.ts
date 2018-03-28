@@ -1,101 +1,180 @@
-import * as express from 'express';
-import * as url from 'url';
+import { ExecutionResult, formatError, GraphQLError } from 'graphql';
 import {
+  resolveGraphqlOptions,
   GraphQLOptions,
-  HttpQueryError,
-  runHttpQuery,
+  runQuery,
 } from 'apollo-server-core';
-import * as GraphiQL from 'apollo-server-module-graphiql';
 
-export interface ExpressGraphQLOptionsFunction {
-  (req?: express.Request, res?: express.Response):
-    | GraphQLOptions
-    | Promise<GraphQLOptions>;
+import '@feathersjs/socket-commons';
+import {
+  FeathersError,
+  MethodNotAllowed,
+  BadRequest,
+  GeneralError,
+} from '@feathersjs/errors';
+import { ServiceMethods, Params, Application } from '@feathersjs/feathers';
+import { Request, Response } from '@feathersjs/express';
+import { GraphQLResponse } from '../../apollo-server-core/dist/runQuery';
+
+export const feathersGraphQLFormatter = (req, res, next): void => {
+  if (res.data === undefined) {
+    return next();
+  }
+
+  if (res.statusCode === 201) {
+    res.status(200);
+  }
+
+  res.setHeader('Allow', 'GET,POST');
+
+  res.format({
+    'application/json': function() {
+      res.json(res.data);
+    },
+  });
+};
+
+export interface FeathersGraphQLQuery {
+  query: string;
+  context?: any;
+  operationName?: string;
+  variables?: any;
 }
 
-// Design principles:
-// - there is just one way allowed: POST request with JSON body. Nothing else.
-// - simple, fast and secure
-//
+export type FeathersGraphQLData =
+  | FeathersGraphQLQuery
+  | Array<FeathersGraphQLQuery>;
 
-export interface ExpressHandler {
-  (req: express.Request, res: express.Response, next): void;
+export interface FeathersGraphQLOptionsFunction {
+  (service: FeathersGraphQLService): GraphQLOptions | Promise<GraphQLOptions>;
 }
 
-export function graphqlExpress(
-  options: GraphQLOptions | ExpressGraphQLOptionsFunction,
-): ExpressHandler {
+export interface FeathersGraphQLParams extends Params {
+  query: FeathersGraphQLQuery;
+}
+
+export class FeathersGraphQLError extends FeathersError {
+  constructor(message: string, data: any) {
+    super(message, 'GraphQLError', 500, 'graphql-error', data);
+  }
+}
+
+export class FeathersGraphQLService implements ServiceMethods<any> {
+  options: GraphQLOptions | FeathersGraphQLOptionsFunction;
+
+  constructor(options: GraphQLOptions | FeathersGraphQLOptionsFunction) {
+    this.options = options;
+  }
+
+  async query(
+    q: FeathersGraphQLQuery | Array<FeathersGraphQLQuery>,
+  ): Promise<GraphQLResponse | Array<GraphQLResponse>> {
+    const optionsObject = await resolveGraphqlOptions(this.options, this);
+    const isBatch = Array.isArray(q);
+    const queries = Array.isArray(q) ? q : [q];
+    const requests = queries.map(current => {
+      let { query, variables, operationName } = current;
+      let context = optionsObject.context || {};
+
+      if (typeof context === 'function') {
+        context = context();
+      } else if (isBatch) {
+        context = Object.assign(
+          Object.create(Object.getPrototypeOf(context)),
+          context,
+        );
+      }
+
+      try {
+        variables =
+          typeof variables === 'string' ? JSON.parse(variables) : variables;
+      } catch (error) {
+        throw new BadRequest('Variables are invalid JSON.');
+      }
+
+      let params = Object.assign({}, optionsObject, {
+        query,
+        variables,
+        context,
+        operationName,
+        formatError,
+      });
+
+      if (optionsObject.formatParams) {
+        params = optionsObject.formatParams(params);
+      }
+
+      return runQuery(params);
+    });
+    const results = await Promise.all(requests);
+
+    return isBatch ? results : results[0];
+  }
+
+  async find(params?: FeathersGraphQLParams): Promise<any> {
+    if (!params.query || !params.query.query) {
+      throw new BadRequest('GET query missing.');
+    }
+
+    return this.query(params.query);
+  }
+
+  async create(data: FeathersGraphQLData, params?: Params): Promise<any> {
+    return this.query(data);
+  }
+
+  async get(id: any, params?: Params): Promise<any> {
+    throw new MethodNotAllowed('Method get is not implemented');
+  }
+
+  async update(id: any, data: any, params?: Params): Promise<any> {
+    throw new MethodNotAllowed('Method update is not implemented');
+  }
+
+  async patch(id: any, data: Partial<any>, params?: Params): Promise<any> {
+    throw new MethodNotAllowed('Method patch is not implemented');
+  }
+
+  async remove(id: any, params?: Params): Promise<any> {
+    throw new MethodNotAllowed('Method remove is not implemented');
+  }
+
+  setup(app: Application, path: string): void {
+    const service = app.service(path);
+
+    if (typeof service.publish === 'function') {
+      service.publish(() => null);
+    }
+
+    service.hooks({
+      error: {
+        create(context) {
+          if (!context.data) {
+            context.error = new GraphQLError('POST body missing.');
+          }
+        },
+      },
+    });
+  }
+}
+
+export function graphqlFeathers(
+  options: GraphQLOptions | FeathersGraphQLOptionsFunction,
+): FeathersGraphQLService {
   if (!options) {
     throw new Error('Apollo Server requires options.');
   }
 
   if (arguments.length > 1) {
-    // TODO: test this
     throw new Error(
       `Apollo Server expects exactly one argument, got ${arguments.length}`,
     );
   }
 
-  return (req: express.Request, res: express.Response, next): void => {
-    runHttpQuery([req, res], {
-      method: req.method,
-      options: options,
-      query: req.method === 'POST' ? req.body : req.query,
-    }).then(
-      gqlResponse => {
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Content-Length', Buffer.byteLength(gqlResponse, 'utf8'));
-        res.write(gqlResponse);
-        res.end();
-      },
-      (error: HttpQueryError) => {
-        if ('HttpQueryError' !== error.name) {
-          return next(error);
-        }
-
-        if (error.headers) {
-          Object.keys(error.headers).forEach(header => {
-            res.setHeader(header, error.headers[header]);
-          });
-        }
-
-        res.statusCode = error.statusCode;
-        res.write(error.message);
-        res.end();
-      },
-    );
-  };
+  return new FeathersGraphQLService(options);
 }
 
-export interface ExpressGraphiQLOptionsFunction {
-  (req?: express.Request):
-    | GraphiQL.GraphiQLData
-    | Promise<GraphiQL.GraphiQLData>;
-}
-
-/* This middleware returns the html for the GraphiQL interactive query UI
- *
- * GraphiQLData arguments
- *
- * - endpointURL: the relative or absolute URL for the endpoint which GraphiQL will make queries to
- * - (optional) query: the GraphQL query to pre-fill in the GraphiQL UI
- * - (optional) variables: a JS object of variables to pre-fill in the GraphiQL UI
- * - (optional) operationName: the operationName to pre-fill in the GraphiQL UI
- * - (optional) result: the result of the query to pre-fill in the GraphiQL UI
- */
-
-export function graphiqlExpress(
-  options: GraphiQL.GraphiQLData | ExpressGraphiQLOptionsFunction,
-) {
-  return (req: express.Request, res: express.Response, next) => {
-    const query = req.url && url.parse(req.url, true).query;
-    GraphiQL.resolveGraphiQLString(query, options, req).then(
-      graphiqlString => {
-        res.setHeader('Content-Type', 'text/html');
-        res.write(graphiqlString);
-        res.end();
-      },
-      error => next(error),
-    );
-  };
-}
+export {
+  graphiqlExpress as graphiqlFeathers,
+  ExpressGraphiQLOptionsFunction as FeathersGraphiQLOptionsFunction,
+} from 'apollo-server-express';
