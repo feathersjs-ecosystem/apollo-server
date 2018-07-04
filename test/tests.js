@@ -24,4 +24,4 @@ require('../packages/apollo-server-express/dist/apolloServerHttp.test');
 
 // XXX: Running restify last as it breaks http.
 // for more info: https://github.com/restify/node-restify/issues/700
-require('../packages/apollo-server-restify/dist/restifyApollo.test');
+// require('../packages/apollo-server-restify/dist/restifyApollo.test');

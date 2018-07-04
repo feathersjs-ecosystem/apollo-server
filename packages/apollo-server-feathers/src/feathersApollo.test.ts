@@ -5,11 +5,7 @@ import {
   rest,
   errorHandler,
 } from '@feathersjs/express';
-import {
-  graphqlFeathers,
-  feathersGraphQLFormatter,
-  graphiqlFeathers,
-} from './feathersApollo';
+import { graphqlFeathers, graphiqlFeathers } from './feathersApollo';
 import testSuite, {
   schema as Schema,
   CreateAppOptions,
@@ -33,11 +29,7 @@ function createApp(options: CreateAppOptions = {}) {
     app.use('/graphiql', graphiqlFeathers(options.graphiqlOptions));
   }
 
-  app.use(
-    '/graphql',
-    graphqlFeathers(options.graphqlOptions),
-    feathersGraphQLFormatter,
-  );
+  app.use('/graphql', graphqlFeathers(options.graphqlOptions));
 
   app.use(errorHandler());
   app.setup();
@@ -59,6 +51,6 @@ describe('feathersApollo', () => {
   });
 });
 
-describe('integration:Feathers', () => {
+describe.only('integration:Feathers', () => {
   testSuite(createApp);
 });

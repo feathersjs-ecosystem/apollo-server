@@ -13,26 +13,7 @@ import {
   GeneralError,
 } from '@feathersjs/errors';
 import { ServiceMethods, Params, Application } from '@feathersjs/feathers';
-import { Request, Response } from '@feathersjs/express';
 import { GraphQLResponse } from '../../apollo-server-core/dist/runQuery';
-
-export const feathersGraphQLFormatter = (req, res, next): void => {
-  if (res.data === undefined) {
-    return next();
-  }
-
-  if (res.statusCode === 201) {
-    res.status(200);
-  }
-
-  res.setHeader('Allow', 'GET,POST');
-
-  res.format({
-    'application/json': function() {
-      res.json(res.data);
-    },
-  });
-};
 
 export interface FeathersGraphQLQuery {
   query: string;
@@ -59,6 +40,10 @@ export class FeathersGraphQLError extends FeathersError {
   }
 }
 
+const setStatus = ctx => {
+  ctx.statusCode = 200;
+};
+
 export class FeathersGraphQLService implements ServiceMethods<any> {
   options: GraphQLOptions | FeathersGraphQLOptionsFunction;
 
@@ -68,7 +53,7 @@ export class FeathersGraphQLService implements ServiceMethods<any> {
 
   async query(
     q: FeathersGraphQLQuery | Array<FeathersGraphQLQuery>,
-  ): Promise<GraphQLResponse | Array<GraphQLResponse>> {
+  ): Promise<ExecutionResult | Array<ExecutionResult>> {
     const optionsObject = await resolveGraphqlOptions(this.options, this);
     const isBatch = Array.isArray(q);
     const queries = Array.isArray(q) ? q : [q];
@@ -92,19 +77,20 @@ export class FeathersGraphQLService implements ServiceMethods<any> {
         throw new BadRequest('Variables are invalid JSON.');
       }
 
-      let params = Object.assign({}, optionsObject, {
+      let params = Object.assign({ formatError }, optionsObject, {
         query,
         variables,
         context,
         operationName,
-        formatError,
       });
 
       if (optionsObject.formatParams) {
         params = optionsObject.formatParams(params);
       }
 
-      return runQuery(params);
+      return runQuery(params).catch(error => {
+        return { errors: [params.formatError(error)] } as GraphQLResponse;
+      });
     });
     const results = await Promise.all(requests);
 
@@ -147,6 +133,10 @@ export class FeathersGraphQLService implements ServiceMethods<any> {
     }
 
     service.hooks({
+      after: {
+        find: setStatus,
+        create: setStatus,
+      },
       error: {
         create(context) {
           if (!context.data) {
@@ -155,6 +145,13 @@ export class FeathersGraphQLService implements ServiceMethods<any> {
         },
       },
     });
+
+    // Workaround because the TypeScript definition for services
+    // currently does not allow optional methods
+    delete service.update;
+    delete service.remove;
+    delete service.patch;
+    delete service.get;
   }
 }
 
